@@ -39,6 +39,8 @@ def train_one_epoch(model, loader, criterion, optimizer, device, scaler=None):
     total_loss = 0.0
     total_iou = 0.0
     total_dice = 0.0
+    total_miou = 0.0
+    total_kappa = 0.0
     num_batches = 0
     use_amp = scaler is not None
     
@@ -65,12 +67,16 @@ def train_one_epoch(model, loader, criterion, optimizer, device, scaler=None):
         total_loss += loss.item()
         total_iou += metrics["iou"]
         total_dice += metrics["dice"]
+        total_miou += metrics["miou"]
+        total_kappa += metrics["kappa"]
         num_batches += 1
     
     return {
         "loss": total_loss / max(num_batches, 1),
         "iou": total_iou / max(num_batches, 1),
         "dice": total_dice / max(num_batches, 1),
+        "miou": total_miou / max(num_batches, 1),
+        "kappa": total_kappa / max(num_batches, 1),
     }
 
 
@@ -81,6 +87,8 @@ def validate(model, loader, criterion, device):
     total_loss = 0.0
     total_iou = 0.0
     total_dice = 0.0
+    total_miou = 0.0
+    total_kappa = 0.0
     num_batches = 0
     use_amp = device.type == 'cuda'
     
@@ -97,12 +105,16 @@ def validate(model, loader, criterion, device):
         total_loss += loss.item()
         total_iou += metrics["iou"]
         total_dice += metrics["dice"]
+        total_miou += metrics["miou"]
+        total_kappa += metrics["kappa"]
         num_batches += 1
     
     return {
         "loss": total_loss / max(num_batches, 1),
         "iou": total_iou / max(num_batches, 1),
         "dice": total_dice / max(num_batches, 1),
+        "miou": total_miou / max(num_batches, 1),
+        "kappa": total_kappa / max(num_batches, 1),
     }
 
 
@@ -212,26 +224,30 @@ def main():
         print(
             f"Epoch {epoch:3d}/{config.NUM_EPOCHS} | "
             f"Train Loss: {train_metrics['loss']:.4f} IoU: {train_metrics['iou']:.4f} | "
-            f"Val Loss: {val_metrics['loss']:.4f} IoU: {val_metrics['iou']:.4f} Dice: {val_metrics['dice']:.4f} | "
+            f"Val Loss: {val_metrics['loss']:.4f} IoU: {val_metrics['iou']:.4f} "
+            f"Dice: {val_metrics['dice']:.4f} mIoU: {val_metrics['miou']:.4f} "
+            f"Kappa: {val_metrics['kappa']:.4f} | "
             f"LR: {lr:.6f} | {elapsed:.1f}s"
         )
         
-        # Save best model
-        if val_metrics["iou"] > best_val_iou:
-            best_val_iou = val_metrics["iou"]
+        # Save best model (based on mIoU)
+        if val_metrics["miou"] > best_val_iou:
+            best_val_iou = val_metrics["miou"]
             best_epoch = epoch
             ckpt_path = config.CHECKPOINT_DIR / "best_model.pth"
             torch.save({
                 "epoch": epoch,
                 "model_state_dict": model.state_dict(),
                 "optimizer_state_dict": optimizer.state_dict(),
-                "val_iou": best_val_iou,
+                "val_iou": val_metrics["iou"],
                 "val_dice": val_metrics["dice"],
+                "val_miou": best_val_iou,
+                "val_kappa": val_metrics["kappa"],
             }, ckpt_path)
-            print(f"  → Saved best model (IoU: {best_val_iou:.4f})")
+            print(f"  -> Saved best model (mIoU: {best_val_iou:.4f})")
     
     print("-" * 60)
-    print(f"[Done] Best Val IoU: {best_val_iou:.4f} at epoch {best_epoch}")
+    print(f"[Done] Best Val mIoU: {best_val_iou:.4f} at epoch {best_epoch}")
     print(f"[Done] Checkpoint: {config.CHECKPOINT_DIR / 'best_model.pth'}")
 
 

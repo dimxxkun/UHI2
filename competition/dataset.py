@@ -108,7 +108,6 @@ def get_train_augmentation():
             A.HueSaturationValue(hue_shift_limit=10, sat_shift_limit=20, val_shift_limit=20, p=1.0),
         ], p=0.3),
         A.GaussNoise(var_limit=(5.0, 25.0), p=0.2),
-        A.Normalize(mean=config.MEAN, std=config.STD),
         ToTensorV2(),
     ])
 
@@ -119,9 +118,26 @@ def get_val_augmentation():
         return None
     
     return A.Compose([
-        A.Normalize(mean=config.MEAN, std=config.STD),
         ToTensorV2(),
     ])
+
+
+def _normalize_per_image(image: torch.Tensor) -> torch.Tensor:
+    """Normalize a tensor image per-image (Z-score).
+    
+    Handles uint8 (0-255) and float32 (0-1) inputs consistently.
+    Always returns a float32 tensor.
+    """
+    # Ensure float32
+    if image.dtype != torch.float32:
+        image = image.float()
+    # Scale to 0-1 if still in 0-255 range
+    if image.max() > 1.0:
+        image = image / 255.0
+    # Z-score normalization per channel
+    mean = image.mean(dim=(1, 2), keepdim=True)
+    std = image.std(dim=(1, 2), keepdim=True) + 1e-6
+    return (image - mean) / std
 
 
 class GIDSegmentationDataset(Dataset):
@@ -146,19 +162,22 @@ class GIDSegmentationDataset(Dataset):
         # Load image (JPG, RGB)
         image = np.array(Image.open(img_path).convert("RGB"))
         
-        # Load label (PNG, RGB color mask) → binary
+        # Load label (PNG, RGB color mask) -> binary
         label_rgb = np.array(Image.open(lbl_path).convert("RGB"))
         mask = color_label_to_binary(label_rgb)
         
         # Apply augmentation
         if self.transform is not None:
             augmented = self.transform(image=image, mask=mask)
-            image = augmented["image"]        # (3, H, W) float tensor
-            mask = augmented["mask"]           # (H, W) uint8 tensor
+            image = augmented["image"]        # (C, H, W) tensor (uint8 from ToTensorV2)
+            mask = augmented["mask"]           # (H, W) tensor
         else:
-            # Manual conversion if no albumentations
             image = torch.from_numpy(image).permute(2, 0, 1).float() / 255.0
             mask = torch.from_numpy(mask)
+
+        # Per-image normalization
+        if config.USE_PER_IMAGE_NORM:
+            image = _normalize_per_image(image)
         
         # Ensure mask is float with channel dim: (1, H, W)
         mask = mask.unsqueeze(0).float()
@@ -187,5 +206,9 @@ class GIDTestDataset(Dataset):
             image = augmented["image"]
         else:
             image = torch.from_numpy(image).permute(2, 0, 1).float() / 255.0
+
+        # Per-image normalization (same as training)
+        if config.USE_PER_IMAGE_NORM:
+            image = _normalize_per_image(image)
         
         return image, img_path.name

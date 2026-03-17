@@ -42,8 +42,14 @@ def main():
     model.eval()
     
     print(f"[Model] Loaded checkpoint from epoch {checkpoint['epoch']}")
-    print(f"        Val IoU: {checkpoint['val_iou']:.4f}, " 
-          f"Val Dice: {checkpoint['val_dice']:.4f}")
+    val_iou = checkpoint.get('val_iou', 'N/A')
+    val_dice = checkpoint.get('val_dice', 'N/A')
+    val_miou = checkpoint.get('val_miou', 'N/A')
+    val_kappa = checkpoint.get('val_kappa', 'N/A')
+    print(f"        Val IoU: {val_iou if isinstance(val_iou, str) else f'{val_iou:.4f}'}, "
+          f"Val Dice: {val_dice if isinstance(val_dice, str) else f'{val_dice:.4f}'}, "
+          f"Val mIoU: {val_miou if isinstance(val_miou, str) else f'{val_miou:.4f}'}, "
+          f"Val Kappa: {val_kappa if isinstance(val_kappa, str) else f'{val_kappa:.4f}'}")
     
     # Load test data
     test_images = get_test_images()
@@ -60,31 +66,45 @@ def main():
         pin_memory=(device.type == 'cuda'),
     )
     
-    # Create submission directory
+    # Create directories
     config.SUBMISSION_DIR.mkdir(parents=True, exist_ok=True)
+    config.VISUAL_DIR.mkdir(parents=True, exist_ok=True)
     
     # Run inference
     print(f"\n[Inference] Processing {len(test_images)} test images...")
+    print(f"            Threshold: {config.PREDICT_THRESHOLD}")
     
     output_paths = []
     with torch.no_grad():
-        for i, (image, filename) in enumerate(test_loader):
-            image = image.to(device)
+        for i, (image_tensor, filename) in enumerate(test_loader):
+            # Keep original image for visualization
+            orig_path = test_images[i]
+            orig_img = Image.open(orig_path).convert("RGB")
+            
+            image_tensor = image_tensor.to(device)
             
             # Forward pass
-            logits = model(image)
+            logits = model(image_tensor)
             
-            # Binarize: sigmoid → threshold 0.5
-            pred = (torch.sigmoid(logits) > 0.5).cpu().numpy()
+            # Binarize
+            probs = torch.sigmoid(logits)
+            mask_np = (probs > config.PREDICT_THRESHOLD).cpu().numpy()[0, 0].astype(np.uint8)
             
-            # Extract single image prediction: (1, 1, H, W) → (H, W)
-            mask = pred[0, 0].astype(np.uint8)
-            
-            # Save as PNG
-            fname = filename[0]  # DataLoader wraps in list
+            # 1. Save submission mask (0/1 labels)
+            fname = filename[0]
             out_path = config.SUBMISSION_DIR / fname
-            Image.fromarray(mask).save(out_path)
+            Image.fromarray(mask_np).save(out_path)
             output_paths.append(out_path)
+            
+            # 2. Save visual preview (Red overlay)
+            if mask_np.max() > 0:
+                # Create red mask
+                red_mask = np.zeros((512, 512, 3), dtype=np.uint8)
+                red_mask[mask_np == 1] = [255, 0, 0]
+                
+                # Blend with original
+                preview = Image.blend(orig_img, Image.fromarray(red_mask), alpha=0.4)
+                preview.save(config.VISUAL_DIR / f"preview_{fname}")
             
             if (i + 1) % 50 == 0 or (i + 1) == len(test_images):
                 print(f"  Processed {i + 1}/{len(test_images)}")
@@ -92,6 +112,7 @@ def main():
     # Verify outputs
     print(f"\n[Verify] Checking {len(output_paths)} output masks...")
     errors = []
+    has_detections = 0
     for p in output_paths:
         img = np.array(Image.open(p))
         if img.shape != (512, 512):
@@ -99,13 +120,19 @@ def main():
         unique = np.unique(img)
         if not all(v in [0, 1] for v in unique):
             errors.append(f"  {p.name}: unexpected values {unique}")
+        if 1 in unique:
+            has_detections += 1
     
     if errors:
         print("[Warning] Issues found:")
         for e in errors:
             print(e)
     else:
-        print("[Verify] All masks are 512×512 with values ∈ {0, 1} ✓")
+        print(f"[Verify] All masks are 512x512 with values in {{0, 1}} [OK]")
+        print(f"[Verify] Images with built-up detections: {has_detections}/{len(output_paths)}")
+    
+    if has_detections > 0:
+        print(f"[Info] Visual previews saved to: {config.VISUAL_DIR}")
     
     # Package into ZIP
     zip_path = config.OUTPUT_DIR / "submission.zip"

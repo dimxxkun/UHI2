@@ -76,7 +76,7 @@ class BCEDiceLoss(nn.Module):
 
 def compute_metrics(logits, targets, threshold=0.5):
     """
-    Compute IoU and Dice score.
+    Compute IoU, Dice, mIoU, and Cohen's Kappa.
     
     Args:
         logits: (B, 1, H, W) raw model output
@@ -84,7 +84,7 @@ def compute_metrics(logits, targets, threshold=0.5):
         threshold: binarization threshold
     
     Returns:
-        dict with 'iou' and 'dice' values
+        dict with 'iou', 'dice', 'miou', and 'kappa' values
     """
     with torch.no_grad():
         preds = (torch.sigmoid(logits) > threshold).float()
@@ -93,18 +93,33 @@ def compute_metrics(logits, targets, threshold=0.5):
         preds_flat = preds.view(preds.size(0), -1)
         targets_flat = targets.view(targets.size(0), -1)
         
-        intersection = (preds_flat * targets_flat).sum(dim=1)
-        union = preds_flat.sum(dim=1) + targets_flat.sum(dim=1) - intersection
+        # Confusion matrix components (per sample)
+        tp = (preds_flat * targets_flat).sum(dim=1)              # true positive
+        fp = (preds_flat * (1 - targets_flat)).sum(dim=1)        # false positive
+        fn = ((1 - preds_flat) * targets_flat).sum(dim=1)        # false negative
+        tn = ((1 - preds_flat) * (1 - targets_flat)).sum(dim=1)  # true negative
         
-        # IoU
-        iou = (intersection + 1e-6) / (union + 1e-6)
+        # IoU for positive class (built-up)
+        iou_pos = (tp + 1e-6) / (tp + fp + fn + 1e-6)
+        
+        # IoU for negative class (background)
+        iou_neg = (tn + 1e-6) / (tn + fp + fn + 1e-6)
+        
+        # mIoU = mean of both class IoUs
+        miou = (iou_pos + iou_neg) / 2.0
         
         # Dice
-        dice = (2.0 * intersection + 1e-6) / (
-            preds_flat.sum(dim=1) + targets_flat.sum(dim=1) + 1e-6
-        )
+        dice = (2.0 * tp + 1e-6) / (2.0 * tp + fp + fn + 1e-6)
+        
+        # Cohen's Kappa
+        total = tp + fp + fn + tn
+        po = (tp + tn) / total                           # observed agreement
+        pe = ((tp + fp) * (tp + fn) + (fn + tn) * (fp + tn)) / (total * total)  # expected agreement
+        kappa = (po - pe) / (1.0 - pe + 1e-6)
         
         return {
-            "iou": iou.mean().item(),
+            "iou": iou_pos.mean().item(),
             "dice": dice.mean().item(),
+            "miou": miou.mean().item(),
+            "kappa": kappa.mean().item(),
         }

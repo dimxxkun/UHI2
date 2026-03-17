@@ -20,7 +20,10 @@ TEST_IMG_DIR = DATA_ROOT / "Test" / "Images"
 # Output
 OUTPUT_DIR = PROJECT_ROOT / "competition" / "output"
 CHECKPOINT_DIR = OUTPUT_DIR / "checkpoints"
+# Prediction
 SUBMISSION_DIR = OUTPUT_DIR / "submission"
+VISUAL_DIR = OUTPUT_DIR / "visual_preview"
+PREDICT_THRESHOLD = 0.3
 
 # ============================================
 # Label Encoding (from readme.md)
@@ -37,13 +40,14 @@ VAL_SPLIT = 0.15
 SEED = 42
 
 # Model
-ENCODER_NAME = "resnet34"
+ENCODER_NAME = "resnet50"
 ENCODER_WEIGHTS = "imagenet"
 
 # Optimizer
 LEARNING_RATE = 1e-4
 WEIGHT_DECAY = 1e-4
-NUM_EPOCHS = 25
+NUM_EPOCHS = 30
+USE_PER_IMAGE_NORM = True  # Enable robust normalization for satellite images
 
 # Scheduler
 SCHEDULER_T_MAX = NUM_EPOCHS
