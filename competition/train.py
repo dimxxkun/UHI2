@@ -167,6 +167,7 @@ def main():
         shuffle=True,
         num_workers=config.NUM_WORKERS,
         pin_memory=use_cuda,
+        persistent_workers=True,    ##
         drop_last=True,
     )
     val_loader = DataLoader(
@@ -175,6 +176,7 @@ def main():
         shuffle=False,
         num_workers=config.NUM_WORKERS,
         pin_memory=use_cuda,
+        persistent_workers=True,   ##
     )
     
     # Model
@@ -245,6 +247,17 @@ def main():
                 "val_kappa": val_metrics["kappa"],
             }, ckpt_path)
             print(f"  -> Saved best model (mIoU: {best_val_iou:.4f})")
+
+        # Save every 3 epochs regardless
+        if epoch % 3 == 0:
+            ckpt_path = config.CHECKPOINT_DIR / f"epoch_{epoch}.pth"
+            torch.save({
+                "epoch": epoch,
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "val_miou": val_metrics["miou"],
+            }, ckpt_path)
+            print(f"  -> Saved periodic checkpoint: epoch_{epoch}.pth")
     
     print("-" * 60)
     print(f"[Done] Best Val mIoU: {best_val_iou:.4f} at epoch {best_epoch}")
